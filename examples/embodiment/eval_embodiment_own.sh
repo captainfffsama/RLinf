@@ -1,4 +1,12 @@
 #! /bin/bash
+###
+ # @Author: captain_hq
+ # @Date: 2026-06-04 16:48:38
+ # @LastEditors: captain_hq tuanzhang_hc5090@outlook.com
+ # @LastEditTime: 2026-06-04 16:49:06
+ # @FilePath: /RLinf/examples/embodiment/eval_embodiment_own.sh
+ # @Description:
+###
 
 export EMBODIED_PATH="$( cd "$(dirname "${BASH_SOURCE[0]}" )" && pwd )"
 export REPO_PATH=$(dirname $(dirname "$EMBODIED_PATH"))
@@ -16,7 +24,7 @@ export OMNIGIBSON_KEY_PATH=${OMNIGIBSON_KEY_PATH:-$OMNIGIBSON_DATA_PATH/omnigibs
 export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omnigibson-robot-assets/}
 export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
 # Base path to Isaac Sim, only required when running the behavior experiment.
-export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
+export ISAAC_PATH="/data/workspaces/RLinf/.venv/lib/python3.11/site-packages/isaacsim"
 echo "Using ISAAC_PATH=$ISAAC_PATH"
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}

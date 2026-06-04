@@ -20,6 +20,7 @@ export OMNIGIBSON_ASSET_PATH=${OMNIGIBSON_ASSET_PATH:-$OMNIGIBSON_DATA_PATH/omni
 export OMNIGIBSON_HEADLESS=${OMNIGIBSON_HEADLESS:-1}
 # Base path to Isaac Sim, only required when running the behavior experiment.
 export ISAAC_PATH=${ISAAC_PATH:-/path/to/isaac-sim}
+echo "Using ISAAC_PATH=$ISAAC_PATH"
 export EXP_PATH=${EXP_PATH:-$ISAAC_PATH/apps}
 export CARB_APP_PATH=${CARB_APP_PATH:-$ISAAC_PATH/kit}
 

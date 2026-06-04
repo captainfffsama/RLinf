@@ -1,3 +1,7 @@
+.history/
+_isaac_lab
+tmp/
+RLinf-Gr00t-SFT-Stack-cube/
 __pycache__
 .vscode
 *.log

@@ -361,6 +361,7 @@ class FlowMatchingActionHeadForRLActionPrediction(FlowmatchingActionHead):
             denoise_ind = denoise_inds[:, idx]
             chains_pre = chains[torch.arange(batch_size), denoise_ind]
             chains_next = chains[torch.arange(batch_size), denoise_ind + 1]
+            # STUDY: denoise_ind 和FM生成步的时间有关系
             x_t_mean, x_t_std = self.sample_mean_var_val(
                 vl_embs=vl_embs,
                 idx=denoise_ind,
