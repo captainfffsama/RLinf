@@ -46,9 +46,6 @@ data:
   lazy_loading: false
   num_workers: 2
 
-algorithm:
-  adv_type: gae
-
 actor:
   group_name: "ActorGroup"
   training_backend: "fsdp"
@@ -73,7 +70,7 @@ actor:
     total_training_steps: ${runner.max_steps}
     lr_warmup_steps: 200 
 
-  # Override the default values in training_backend/fsdp
+  # Override the default values in hybrid_engines/fsdp
   fsdp_config:
     strategy: "fsdp"
     sharding_strategy: "full_shard"
@@ -83,9 +80,3 @@ actor:
       param_dtype: bf16
       reduce_dtype: fp32
       buffer_dtype: bf16
-
-reward:
-  use_reward_model: False
-
-critic:
-  use_critic_model: False

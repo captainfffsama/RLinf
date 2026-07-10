@@ -21,16 +21,18 @@ online RL training, similar to the HIL-SERL approach.
 
 from typing import Any, Optional
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 from omegaconf import DictConfig
 
-from rlinf.models.embodiment.reward.base_image_reward_model import BaseImageRewardModel
+from rlinf.config import torch_dtype_from_precision
+from rlinf.models.embodiment.reward.base_reward_model import BaseRewardModel
 
 
-class ResNetRewardModel(BaseImageRewardModel):
+class ResNetRewardModel(BaseRewardModel):
     """ResNet-based reward model using binary classification loss.
 
     This model uses a pretrained ResNet backbone followed by a linear head
@@ -38,7 +40,7 @@ class ResNetRewardModel(BaseImageRewardModel):
     on individual images with success/fail labels.
 
     Training Input: (B, C, H, W) - batch of images with labels
-    Inference Input: (B, C, H, W) - batch of single images
+    Inference Input: observation dict containing ``main_images``
 
     Attributes:
         backbone: ResNet feature extractor with modified final layer.
@@ -47,6 +49,8 @@ class ResNetRewardModel(BaseImageRewardModel):
 
     # Supported ResNet architectures
     SUPPORTED_ARCHS = ["resnet18", "resnet34", "resnet50", "resnet101", "resnet152"]
+    IMAGENET_MEAN = [0.485, 0.456, 0.406]
+    IMAGENET_STD = [0.229, 0.224, 0.225]
 
     def __init__(self, cfg: DictConfig):
         """Initialize the ResNet reward model.
@@ -61,6 +65,20 @@ class ResNetRewardModel(BaseImageRewardModel):
         super().__init__(cfg)
 
         self.cfg = cfg
+        self.image_size = cfg.get("image_size", [3, 224, 224])
+        self.normalize = cfg.get("normalize", True)
+
+        # Register normalization constants as buffers (move with model).
+        self.register_buffer(
+            "_mean",
+            torch.tensor(self.IMAGENET_MEAN).view(1, 3, 1, 1),
+            persistent=False,
+        )
+        self.register_buffer(
+            "_std",
+            torch.tensor(self.IMAGENET_STD).view(1, 3, 1, 1),
+            persistent=False,
+        )
 
         self.arch = cfg.get("arch", "resnet18")
         if self.arch not in self.SUPPORTED_ARCHS:
@@ -77,6 +95,61 @@ class ResNetRewardModel(BaseImageRewardModel):
         self._build_model()
 
         self._load_model()
+
+        torch_dtype = torch_dtype_from_precision(cfg.precision)
+        self.to(torch_dtype)
+
+    def preprocess_images(self, images: torch.Tensor) -> torch.Tensor:
+        """Preprocess images for ResNet backbone input.
+
+        This method accepts image tensors in ``uint8`` or floating-point format.
+        ``uint8`` inputs are interpreted as ``[0, 255]`` and scaled to ``[0, 1]``.
+        Floating-point inputs must already be in ``[0, 1]``.
+
+        Args:
+            images: Image tensor in ``NCHW`` or ``NHWC`` layout.
+
+        Returns:
+            A preprocessed tensor in ``NCHW`` layout, resized to
+            ``self.image_size[1:]`` and optionally ImageNet-normalized.
+
+        Raises:
+            ValueError: If floating-point inputs are outside ``[0, 1]``.
+            TypeError: If ``images`` is neither ``uint8`` nor floating point.
+        """
+        if images.dim() == 4 and images.shape[-1] in [1, 3, 4]:
+            images = images.permute(0, 3, 1, 2)
+
+        if images.dtype == torch.uint8:
+            images = images.float() / 255.0
+        elif torch.is_floating_point(images):
+            min_val = float(images.min().detach().item())
+            max_val = float(images.max().detach().item())
+            if min_val < 0.0 or max_val > 1.0:
+                raise ValueError(
+                    "ResNetRewardModel expects floating-point images in [0, 1]. "
+                    f"Got min={min_val:.6f}, max={max_val:.6f}. "
+                    "Please normalize upstream or pass uint8 images."
+                )
+        else:
+            raise TypeError(
+                "ResNetRewardModel expects images to be uint8 or floating point. "
+                f"Got dtype={images.dtype}."
+            )
+
+        target_h, target_w = self.image_size[1], self.image_size[2]
+        if images.shape[2] != target_h or images.shape[3] != target_w:
+            images = F.interpolate(
+                images,
+                size=(target_h, target_w),
+                mode="bilinear",
+                align_corners=False,
+            )
+
+        if self.normalize:
+            images = (images - self._mean) / self._std
+
+        return images
 
     def _build_model(self) -> None:
         """Build the ResNet backbone and reward head."""
@@ -160,6 +233,11 @@ class ResNetRewardModel(BaseImageRewardModel):
 
         # Preprocess images (normalization, etc.)
         images = self.preprocess_images(images)
+        model_parameter = next(self.parameters())
+        images = images.to(
+            device=model_parameter.device,
+            dtype=model_parameter.dtype,
+        )
 
         # Forward through backbone
         logits = self.backbone(images).squeeze(-1)  # (B,)
@@ -186,25 +264,59 @@ class ResNetRewardModel(BaseImageRewardModel):
             "probabilities": probabilities,
         }
 
-    def compute_reward(
-        self,
-        images: torch.Tensor,
-    ) -> torch.Tensor:
+    def compute_reward(self, observations: dict[str, Any]) -> torch.Tensor:
         """Compute rewards for inference.
 
         Args:
-            images: Image tensor of shape [B, C, H, W] or [B, H, W, C].
+            observations: Observation dictionary containing ``main_images``.
 
         Returns:
             torch.Tensor: Reward tensor of shape [B].
         """
+        images = observations.get("main_images", None)
+        if images is None:
+            raise ValueError(
+                "Missing main_images in observations for ResNetRewardModel."
+            )
 
-        # Preprocess and compute rewards
+        if isinstance(images, np.ndarray):
+            images = torch.from_numpy(images)
+        model_parameter = next(self.parameters())
+        images = images.to(device=model_parameter.device)
+
         images = self.preprocess_images(images)
+        images = images.to(dtype=model_parameter.dtype)
 
         with torch.no_grad():
             logits = self.backbone(images).squeeze(-1)  # (B,)
             # Return probabilities for binary classification
             rewards = torch.sigmoid(logits)
 
+        # Optional thresholding: keep consistent with prior worker behavior.
+        threshold = self.cfg.get("reward_threshold", None)
+        if threshold is not None:
+            thr = float(threshold)
+            rewards = torch.where(rewards > thr, rewards, torch.zeros_like(rewards))
+
         return rewards
+
+    def load_from_path(self, model_path: str) -> None:
+        """Load a ResNet reward checkpoint from a file path."""
+        if model_path.endswith(".safetensors"):
+            from safetensors.torch import load_file
+
+            state_dict = load_file(model_path)
+        else:
+            state_dict = torch.load(model_path, map_location="cpu", weights_only=False)
+
+        new_state_dict = {}
+        for k, v in state_dict.items():
+            new_key = k
+            for prefix in ["module.", "_orig_mod.", "model."]:
+                if new_key.startswith(prefix):
+                    new_key = new_key[len(prefix) :]
+            # Skip mean/std buffers (they are persistent=False, auto-created)
+            if new_key in ["mean", "std", "_mean", "_std"]:
+                continue
+            new_state_dict[new_key] = v
+        self.load_state_dict(new_state_dict, strict=True)

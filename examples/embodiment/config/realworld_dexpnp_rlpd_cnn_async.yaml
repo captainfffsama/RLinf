@@ -2,7 +2,7 @@ defaults:
   - env/realworld_dex_pnp@env.train
   - env/realworld_dex_pnp@env.eval
   - model/cnn_policy@actor.model
-  - training_backend/fsdp@actor.fsdp_config
+  - hybrid_engines/fsdp@actor.fsdp_config
   - weight_syncer/patch_syncer@weight_syncer
   - override hydra/job_logging: stdout
 
@@ -66,7 +66,6 @@ algorithm:
 
   backup_entropy: False
   critic_subsample_size: 2
-  eval_rollout_epoch: 1
 
   adv_type: embodied_sac
   loss_type: embodied_sac
@@ -106,23 +105,11 @@ algorithm:
 
   target_update_freq: 1
 
-  sampling_params:
-    do_sample: True
-    temperature_train: 1.0
-    temperature_eval: 0.6
-    top_k: 50
-    top_p: 1.0
-    repetition_penalty: 1.0
-
-  length_params:
-    max_new_token: 12  # action_dim = 12
-    max_length: 1024
-    min_length: 1
-
 env:
   group_name: "EnvGroup"
 
   eval:
+    rollout_epoch: 1
     total_num_envs: 1
 
   train:
@@ -161,7 +148,6 @@ rollout:
   backend: "huggingface"
   enable_offload: False
   pipeline_stage_num: 1
-  sync_weight_nccl_max_ctas: 32
 
   collect_transitions: True
   collect_prev_infos: False
@@ -229,3 +215,6 @@ reward:
 
 critic:
   use_critic_model: False
+
+weight_syncer:
+  nccl_max_ctas: 32 # Max CTAs (Compute Thread Array, the compute resource of GPUs) for sync weight communication. Higher values consume more GPU resources, and thus sync weight is faster but could affect rollout speed in async mode. Positive integer 1 to 32. Default 32.
